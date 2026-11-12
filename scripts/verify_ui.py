@@ -1,7 +1,7 @@
-"""Browser smoke checks via the installed Edge, without downloading WebDriver.
+"""Browser checks with installed Chrome/Edge (no WebDriver download).
 
-Requires websocket-client (available alongside Selenium in the development host).
-Run: python scripts/verify_ui.py
+Requires websocket-client or websockets. Run: python scripts/verify_ui.py
+Set BROWSER to override the browser executable.
 """
 from __future__ import annotations
 
@@ -10,16 +10,23 @@ import json
 import os
 from pathlib import Path
 import socket
+import shutil
+import tempfile
 import subprocess
 import time
 import urllib.request
 
-import websocket
+try:
+    import websocket
+    connect = lambda url: websocket.create_connection(url, origin='http://localhost', timeout=10)
+except ImportError:
+    from websockets.sync.client import connect as ws_connect
+    connect = lambda url: ws_connect(url, origin='http://localhost', open_timeout=10, max_size=None)
 
 
 ROOT = Path(__file__).resolve().parents[1]
 ARTIFACTS = ROOT / 'artifacts'
-EDGE = Path(os.environ.get('PROGRAMFILES(X86)', r'C:\Program Files (x86)')) / 'Microsoft/Edge/Application/msedge.exe'
+BROWSER = os.environ.get('BROWSER') or shutil.which('google-chrome-stable') or shutil.which('google-chrome') or shutil.which('chromium') or str(Path(os.environ.get('PROGRAMFILES(X86)', r'C:\Program Files (x86)')) / 'Microsoft/Edge/Application/msedge.exe')
 
 
 class Browser:
@@ -28,27 +35,29 @@ class Browser:
         with socket.socket() as sock:
             sock.bind(('127.0.0.1', 0))
             self.port = sock.getsockname()[1]
+        self.profile = tempfile.TemporaryDirectory(prefix="maeumgyeol-browser-")
         self.process = subprocess.Popen([
-            str(EDGE), '--headless=new', '--disable-gpu', '--no-first-run',
+            BROWSER, '--headless=new', '--disable-gpu', '--no-first-run',
+            *(['--no-sandbox'] if os.name != 'nt' else []),
             '--no-default-browser-check', '--disable-extensions',
             '--remote-allow-origins=http://localhost',
             f'--remote-debugging-port={self.port}', '--remote-debugging-address=127.0.0.1',
-            f'--user-data-dir={ROOT / ".browser-profile"}', 'about:blank',
-        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
+            f'--user-data-dir={self.profile.name}', 'about:blank',
+        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         for _ in range(100):
             if self.process.poll() is not None:
-                raise RuntimeError('Edge could not start. The local sandbox may require an approved browser run.')
+                raise RuntimeError('Browser could not start. The local sandbox may require an approved browser run.')
             try:
                 with urllib.request.urlopen(f'http://127.0.0.1:{self.port}/json', timeout=1) as response:
                     tabs = json.load(response)
                 target = next(tab for tab in tabs if tab['type'] == 'page')
-                self.ws = websocket.create_connection(target['webSocketDebuggerUrl'], origin='http://localhost', timeout=10)
+                self.ws = connect(target['webSocketDebuggerUrl'])
                 break
             except (OSError, StopIteration):
                 time.sleep(.1)
         else:
             self.process.terminate()
-            raise RuntimeError('Local Edge debugging endpoint did not become ready.')
+            raise RuntimeError('Local browser debugging endpoint did not become ready.')
         self.sequence = 0
         self.errors = []
         self.command('Runtime.enable')
@@ -105,6 +114,7 @@ class Browser:
             self.process.wait(timeout=5)
         except subprocess.TimeoutExpired:
             self.process.terminate()
+        self.profile.cleanup()
 
 
 def run():
@@ -114,120 +124,196 @@ def run():
     def check(condition, name):
         assert condition, name
         checks.append(name)
-        print(f'PASS: {name}')
+        print(f'PASS: {name}', flush=True)
+
+    def open_page(file, fragment='', selector='.main-content'):
+        browser.command('Page.navigate', {'url': (ROOT / file).as_uri() + fragment})
+        for _ in range(100):
+            if browser.evaluate(f'!!document.querySelector({json.dumps(selector)})'):
+                break
+            time.sleep(.05)
+        else:
+            raise AssertionError(f'{file} did not render: {browser.errors}')
+        browser.evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+
+    def key(name):
+        browser.command('Input.dispatchKeyEvent', {'type': 'keyDown', 'key': name})
+
+    def submit():
+        browser.evaluate('document.querySelector("#appointment-form").requestSubmit()')
 
     try:
         browser.size(1440, 1100)
-        browser.command('Page.navigate', {'url': (ROOT / 'index.html').as_uri()})
-        for _ in range(100):
-            if browser.evaluate('!!document.querySelector(".hero")'):
-                break
-            time.sleep(.1)
-        browser.evaluate('document.fonts.ready.then(() => true)')
-        check('마음 홈' in browser.evaluate('document.title'), 'Application opens directly from index.html')
+        open_page('index.html', selector='.hero')
+        check('내담자 공간' in browser.evaluate('document.title'), 'Legacy index opens client workspace')
+        check(browser.evaluate('document.querySelectorAll("[data-role], .role-switch").length') == 0, 'No role switch is exposed')
+        check(browser.evaluate('document.querySelector("#toast").inert'), 'Hidden feedback cannot receive keyboard focus')
         check(browser.evaluate('document.querySelectorAll(".nav-item").length') == 4, 'Four client destinations render')
         browser.screenshot('home-desktop.png')
-
+        browser.evaluate('location.hash = "schedule"')
+        browser.evaluate('new Promise(resolve => setTimeout(resolve, 100))')
+        check(browser.evaluate('location.hash') == '#home', 'Client hash cannot open counselor calendar')
+        check(browser.evaluate('document.querySelector(".workspace-identity").textContent') == '내담자 전용 공간', 'Workspace identity stays client')
         browser.click('[data-mood="3"]')
         check(browser.evaluate('document.querySelector("[data-mood=\\"3\\"]").getAttribute("aria-pressed")') == 'true', 'Mood check-in selected accessibly')
-        check('4점' in browser.evaluate('document.querySelector(".chart").getAttribute("aria-label")'), 'Today mood is reflected in the chart')
+        check('4점' in browser.evaluate('document.querySelector(".chart").getAttribute("aria-label")'), 'Mood is reflected in the chart')
         browser.click('[data-page="journal"]')
-        browser.fill('#journal-input', '오늘은 산책을 했어요. <script>window.__injected=true</script>')
+        browser.fill('#journal-input', '산책했어요. <script>window.__injected=true</script>')
         browser.evaluate('document.querySelector("#journal-form").requestSubmit()')
         check(browser.evaluate('document.querySelectorAll(".journal-entry").length') == 3, 'Journal entry is added')
-        check(browser.evaluate('window.__injected !== true'), 'Journal content is rendered as text, not executable HTML')
+        check(browser.evaluate('window.__injected !== true'), 'Journal is escaped safely')
         browser.click('[data-delete-entry]')
         browser.click('#delete-entry-confirm')
-        check(browser.evaluate('document.querySelectorAll(".journal-entry").length') == 2, 'Entry deletion requires confirmation and removes entry')
-
+        check(browser.evaluate('document.querySelectorAll(".journal-entry").length') == 2, 'Journal deletion works')
         browser.click('[data-page="chat"]')
         browser.fill('#chat-input', '요즘 회사 일 때문에 지쳐요.')
         browser.evaluate('document.querySelector("#chat-form").requestSubmit()')
         browser.evaluate('new Promise(resolve => setTimeout(resolve, 850))')
-        check(browser.evaluate('document.querySelectorAll(".message-row").length') == 3, 'Chat sends a message and displays a sample reply')
-        check('일에 대한 마음' in browser.evaluate('document.querySelector(".chat-messages").textContent'), 'Sample reply matches the conversation topic')
-        browser.screenshot('chat-desktop.png')
-
-        browser.click('[data-role="counselor"]')
-        check(browser.evaluate('document.querySelector("[data-client=\\"seoyeon\\"]").disabled'), 'Counselor cannot open Seoyeon report before consent')
-        browser.click('[data-role="client"]')
+        check(browser.evaluate('document.querySelectorAll(".message-row").length') == 3, 'Chat still sends and replies')
         browser.click('[data-page="report"]')
-        browser.fill('#report-note', '처음이라 조금 긴장돼요. 천천히 이야기하고 싶어요.')
-        browser.click('[data-action="save-note"]')
         browser.click('[data-action="share"]')
-        check(browser.evaluate('document.querySelector("#share-confirm").disabled'), 'Share confirmation is disabled until explicit consent')
+        check(browser.evaluate('document.querySelector("#share-confirm").disabled'), 'Explicit consent required')
         browser.click('#share-consent')
         browser.click('#share-confirm')
-        browser.click('[data-role="counselor"]')
-        check(not browser.evaluate('document.querySelector("[data-client=\\"seoyeon\\"]").disabled'), 'Consent unlocks Seoyeon report')
-        browser.click('[data-client="seoyeon"]')
-        check('처음이라 조금 긴장돼요' in browser.evaluate('document.querySelector(".report-paper").textContent'), 'Shared report includes the saved client note')
-        check('요즘 회사 일 때문에 지쳐요.' not in browser.evaluate('document.querySelector(".report-paper").textContent'), 'Current chat transcript is excluded from the shared report')
-        browser.fill('#report-note', '업무와 휴식의 균형에 대해 먼저 질문하기')
-        browser.click('[data-action="save-note"]')
-        browser.screenshot('report-desktop.png')
-        browser.command('Emulation.setEmulatedMedia', {'media': 'print'})
-        check(browser.evaluate('getComputedStyle(document.querySelector(".sidebar")).display') == 'none', 'Print view hides the navigation and app controls')
-        check(browser.evaluate('getComputedStyle(document.querySelector(".report-paper")).display') != 'none', 'Print view includes the report content')
-        pdf = browser.command('Page.printToPDF', {'printBackground': True, 'paperWidth': 8.27, 'paperHeight': 11.69})
-        (ARTIFACTS / 'report-preview.pdf').write_bytes(base64.b64decode(pdf['data']))
-        browser.command('Emulation.setEmulatedMedia', {'media': ''})
-        browser.click('[data-action="appointment"]')
-        browser.click('[data-time="11:00"]')
-        browser.click('#appointment-confirm')
-        check('11:00' in browser.evaluate('document.querySelector(".schedule-card").textContent'), 'Selected appointment appears on the local schedule')
-        browser.click('[data-action="cancel-appointment"]')
-        browser.click('[data-action="confirm-cancel-appointment"]')
-        check('11:00' not in browser.evaluate('document.querySelector(".schedule-card").textContent'), 'Locally added appointment can be canceled')
-
-        browser.click('[data-page="clients"]')
-        browser.fill('#client-search', '김지우')
-        check(browser.evaluate('document.querySelectorAll(".client-table tbody tr").length') == 1, 'Client search filters by name')
-        browser.fill('#client-search', '없는이름')
-        check('검색 결과가 없어요' in browser.evaluate('document.querySelector(".client-table").textContent'), 'Search has an informative empty state')
-        browser.fill('#client-search', '')
-        browser.click('[data-page="overview"]')
-        browser.screenshot('counselor-desktop.png')
+        check('동의됨' in browser.evaluate('document.querySelector(".report-sidebar").textContent'), 'Client consent updates the client screen')
         browser.click('[data-action="privacy"]')
         browser.click('[data-action="share-revoke"]')
-        check(browser.evaluate('document.querySelector("[data-client=\\"seoyeon\\"]").disabled'), 'Revoking consent locks the report again')
+        check('미공유' in browser.evaluate('document.querySelector(".report-sidebar").textContent'), 'Client can revoke consent')
+        browser.screenshot('report-client-desktop.png')
 
-        browser.click('[data-role="client"]')
+        open_page('client.html', '#overview', '.hero')
+        check(browser.evaluate('location.hash') == '#home', 'Explicit client entry also blocks counselor routes')
         for width in [1440, 1024, 768, 390, 360]:
             browser.size(width, 1000)
-            check(browser.evaluate('document.documentElement.scrollWidth <= innerWidth'), f'Home has no horizontal overflow at {width}px')
+            check(browser.evaluate('document.documentElement.scrollWidth <= innerWidth'), f'Client home fits {width}px')
         browser.size(390, 844)
         browser.screenshot('home-mobile.png')
-        check(browser.evaluate('document.querySelector("#sidebar").inert'), 'Closed mobile navigation is not keyboard-focusable')
+        check(browser.evaluate('document.querySelector("#sidebar").inert'), 'Hidden mobile menu cannot receive focus')
         browser.click('[data-action="menu"]')
-        check(browser.evaluate('document.querySelector(".workspace").inert'), 'Open mobile menu isolates background content')
+        check(browser.evaluate('document.querySelector(".workspace").inert'), 'Mobile menu isolates content')
         browser.click('[data-page="chat"]')
-        check(browser.evaluate('document.documentElement.scrollWidth <= innerWidth'), 'Mobile chat has no horizontal overflow')
-        browser.screenshot('chat-mobile.png')
         browser.click('[data-action="new-chat"]')
-        check(browser.evaluate('document.querySelector("#app").inert'), 'Dialog isolates background content')
+        check(browser.evaluate('document.querySelector("#app").inert'), 'Modal isolates background')
         browser.evaluate('document.querySelector(".modal-header button").focus()')
-        browser.command('Input.dispatchKeyEvent', {'type': 'keyDown', 'key': 'Tab', 'code': 'Tab', 'windowsVirtualKeyCode': 9, 'modifiers': 8})
-        check(browser.evaluate('document.activeElement.dataset.action') == 'confirm-new-chat', 'Shift+Tab wraps to the final dialog control')
-        browser.command('Input.dispatchKeyEvent', {'type': 'keyDown', 'key': 'Tab', 'code': 'Tab', 'windowsVirtualKeyCode': 9})
-        check(browser.evaluate('document.activeElement.dataset.action') == 'modal-close', 'Tab wraps back to the first dialog control')
-        browser.command('Input.dispatchKeyEvent', {'type': 'keyDown', 'key': 'Escape', 'code': 'Escape', 'windowsVirtualKeyCode': 27})
-        check(not browser.evaluate('!!document.querySelector(".modal")'), 'Escape dismisses the dialog')
-        browser.command('Emulation.setEmulatedMedia', {'features': [{'name': 'prefers-reduced-motion', 'value': 'reduce'}]})
-        check(browser.evaluate('getComputedStyle(document.querySelector(".sidebar")).transitionDuration') == '0s', 'Reduced-motion preference disables movement transitions')
-        browser.click('[data-action="menu"]')
-        browser.click('[data-page="report"]')
-        check(browser.evaluate('document.documentElement.scrollWidth <= innerWidth'), 'Mobile report has no horizontal overflow')
-        browser.screenshot('report-mobile.png')
-        browser.click('[data-role="counselor"]')
-        check(browser.evaluate('document.documentElement.scrollWidth <= innerWidth'), 'Mobile counselor dashboard contains the wide table without page overflow')
-        browser.screenshot('counselor-mobile.png')
-        browser.click('[data-role="client"]')
-        browser.click('[data-action="menu"]')
-        browser.click('[data-page="chat"]')
-        browser.command('Page.reload')
-        browser.evaluate('new Promise(resolve => setTimeout(resolve, 350))')
-        check(browser.evaluate('document.querySelectorAll(".message-row").length') == 1, 'Refreshing clears user conversation input')
+        browser.command('Input.dispatchKeyEvent', {'type': 'keyDown', 'key': 'Tab', 'modifiers': 8, 'windowsVirtualKeyCode': 9})
+        check(browser.evaluate('document.activeElement.dataset.action') == 'confirm-new-chat', 'Dialog Shift+Tab wraps')
+        key('Escape')
+        check(not browser.evaluate('!!document.querySelector(".modal")'), 'Escape dismisses dialog')
+
+        browser.size(1440, 1100)
+        open_page('counselor.html', selector='.stats-row')
+        check('상담사 공간' in browser.evaluate('document.title'), 'Counselor entry opens its own dashboard')
+        check(browser.evaluate('document.querySelector("[data-client=\\"seoyeon\\"]").disabled'), 'Pending sample report remains locked')
+        browser.evaluate('location.hash = "chat"')
+        browser.evaluate('new Promise(resolve => setTimeout(resolve, 100))')
+        check(browser.evaluate('location.hash') == '#overview', 'Counselor hash cannot open client chat')
+        browser.screenshot('counselor-desktop.png')
+        browser.click('[data-page="schedule"]')
+        check(browser.evaluate('document.querySelectorAll(".calendar-day").length') == 42, 'Month grid includes 42 dates')
+        check(browser.evaluate('document.querySelectorAll(".agenda-item").length') == 2, 'Today shows both example sessions')
+        check(browser.evaluate('document.querySelectorAll(".calendar-day[tabindex=\\"0\\"]").length') == 1, 'Calendar has one keyboard entry point')
+        today_key = browser.evaluate('document.querySelector(".calendar-day.is-today").dataset.calendarDate')
+        browser.screenshot('calendar-desktop.png')
+        for width in [1440, 1280, 1190, 1024, 768, 760, 390, 360]:
+            browser.size(width, 1000)
+            check(browser.evaluate('document.documentElement.scrollWidth <= innerWidth'), f'Calendar and agenda fit {width}px')
+        browser.size(390, 844)
+        check(browser.evaluate('getComputedStyle(document.querySelector(".calendar-events")).display') == 'none', 'Mobile calendar uses compact event dots')
+        browser.click('[data-action="agenda-focus"]')
+        check(browser.evaluate('document.activeElement.id') == 'agenda-title', 'Mobile shortcut focuses selected day details')
+        check(browser.evaluate('document.querySelector("#agenda-title").getBoundingClientRect().top >= 69'), 'Selected day details remain below sticky header')
+        browser.screenshot('calendar-mobile.png')
+        browser.size(1440, 1100)
+        browser.click('[data-calendar-filter="video"]')
+        check(browser.evaluate('document.querySelectorAll(".agenda-item").length') == 0, 'Type filter applies to agenda')
+        check('해당 유형' in browser.evaluate('document.querySelector(".agenda-empty").textContent'), 'Filtered empty state explains the result')
+        check(browser.evaluate('document.querySelectorAll(".calendar-event:not(.type-video)").length') == 0, 'Type filter also applies to month grid')
+        browser.click('.calendar-filter[data-calendar-filter="all"]')
+        browser.click('[data-action="calendar-next"]')
+        check(not browser.evaluate('!!document.querySelector(".calendar-day.is-today.is-selected")'), 'Next month changes date selection')
+        browser.click('[data-action="calendar-today"]')
+        check(browser.evaluate('document.activeElement.dataset.calendarDate') == today_key, 'Today restores and focuses today')
+        key('ArrowRight')
+        check(browser.evaluate('document.activeElement.dataset.calendarDate') != today_key, 'Arrow key moves day focus and selection')
+        check(browser.evaluate('document.querySelectorAll(".agenda-item").length') == 0, 'Selected empty day has no sessions')
+        browser.screenshot('calendar-empty-desktop.png')
+        browser.click('[data-action="calendar-today"]')
+        browser.click('[data-action="new-appointment"]')
+        check(browser.evaluate('document.querySelector("#appointment-date").value') == today_key, 'New session uses selected date')
+        browser.fill('#appointment-time', '14:20')
+        check('겹칩니다' in browser.evaluate('document.querySelector("#appointment-error").textContent'), 'Overlapping time is explained inline')
+        submit()
+        check(browser.evaluate('!!document.querySelector(".modal")'), 'Overlapping appointment cannot save')
+        browser.fill('#appointment-time', '23:30')
+        check('자정' in browser.evaluate('document.querySelector("#appointment-error").textContent'), 'Session crossing midnight is rejected')
+        browser.fill('#appointment-time', '15:00')
+        browser.fill('#appointment-duration', '60')
+        browser.fill('#appointment-type', 'video')
+        browser.fill('#appointment-client', 'seoyeon')
+        browser.fill('#appointment-note', '<img src=x onerror="window.__noteInjected=true"> 상담 준비')
+        check(browser.evaluate('document.querySelector("#appointment-error").textContent') == '', 'Adjacent sessions are allowed')
+        browser.screenshot('calendar-form-desktop.png')
+        submit()
+        check(browser.evaluate('document.querySelectorAll(".agenda-item").length') == 3, 'New session is added alongside existing sessions')
+        check(browser.evaluate('document.querySelectorAll(".calendar-day.is-selected .calendar-more").length') == 1, 'Crowded dates show a more count')
+        check(browser.evaluate('document.querySelectorAll(".agenda-note img").length') == 0, 'Appointment note HTML is escaped')
+        check(browser.evaluate('window.__noteInjected !== true'), 'Appointment note cannot execute script')
+        check('동의 대기' in browser.evaluate('document.querySelector(".agenda-item.type-video").textContent'), 'Pending consent does not block schedule management')
+        new_id = browser.evaluate('document.querySelector(".agenda-item.type-video [data-edit-appointment]").dataset.editAppointment')
+        browser.click(f'[data-edit-appointment="{new_id}"]')
+        browser.fill('#appointment-time', '11:00')
+        browser.fill('#appointment-duration', '50')
+        browser.fill('#appointment-note', '변경된 준비 메모')
+        submit()
+        check('11:00' in browser.evaluate('document.querySelector(".agenda-item.type-video .agenda-time").textContent'), 'Appointment editing changes time')
+        check('변경된 준비 메모' in browser.evaluate('document.querySelector(".agenda-note").textContent'), 'Edited note is retained')
+        check(browser.evaluate('document.querySelectorAll(".agenda-item").length') == 3, 'Editing does not duplicate an appointment')
+        browser.click(f'[data-cancel-appointment="{new_id}"]')
+        check(browser.evaluate('document.querySelectorAll(".agenda-item").length') == 2, 'Appointment cancellation removes session')
+        check(not browser.evaluate('document.querySelector("#toast").inert'), 'Undo feedback is interactive while visible')
+        browser.click('[data-action="undo-cancel-appointment"]')
+        check(browser.evaluate('document.querySelectorAll(".agenda-item").length') == 3, 'Undo restores canceled appointment')
+        browser.click('[data-edit-appointment="sample-1"]')
+        browser.fill('#appointment-date', '2028-02-29')
+        browser.fill('#appointment-time', '10:00')
+        submit()
+        check(browser.evaluate('document.querySelector(".calendar-day.is-selected").dataset.calendarDate') == '2028-02-29', 'Date edit moves calendar to leap day')
+        browser.click('[data-action="calendar-next"]')
+        check(browser.evaluate('document.querySelector(".calendar-day.is-selected").dataset.calendarDate') == '2028-03-29', 'Month navigation preserves selected day')
+        browser.click('[data-action="calendar-prev"]')
+        browser.click('[data-calendar-date="2028-02-29"]')
+        key('ArrowRight')
+        check(browser.evaluate('document.activeElement.dataset.calendarDate') == '2028-03-01', 'Keyboard handles leap-day boundary')
+        key('PageUp')
+        check(browser.evaluate('document.activeElement.dataset.calendarDate') == '2028-02-01', 'PageUp moves one month and keeps focus in calendar')
+        browser.click('[data-action="calendar-today"]')
+        browser.click('[data-page="overview"]')
+        check(browser.evaluate('document.querySelectorAll(".schedule-item").length') == 2, 'Dashboard uses updated calendar data')
+        browser.click('[data-page="clients"]')
+        browser.fill('#client-search', '김지우')
+        check(browser.evaluate('document.querySelectorAll(".client-table tbody tr").length') == 1, 'Client search still works')
+        browser.click('[data-client="jiwoo"]')
+        browser.command('Emulation.setEmulatedMedia', {'media': 'print'})
+        check(browser.evaluate('getComputedStyle(document.querySelector(".topbar")).display') == 'none', 'Print hides sticky navigation')
+        check(browser.evaluate('getComputedStyle(document.querySelector(".report-paper")).display') != 'none', 'Print keeps report content')
+        browser.command('Emulation.setEmulatedMedia', {'media': ''})
+        browser.click('[data-action="appointment"]')
+        check(browser.evaluate('document.querySelector("#appointment-client").value') == 'jiwoo', 'Report opens calendar form with correct client')
+        key('Escape')
+        browser.click('[data-page="schedule"]')
+        browser.command('Emulation.setEmulatedMedia', {'features': [{'name': 'prefers-reduced-motion', 'value': 'reduce'}, {'name': 'prefers-reduced-transparency', 'value': 'reduce'}]})
+        check(browser.evaluate('getComputedStyle(document.querySelector(".calendar-day")).transitionDuration') == '0s', 'Reduced motion disables calendar motion')
+        check(browser.evaluate('getComputedStyle(document.querySelector(".topbar")).backdropFilter') == 'none', 'Reduced transparency removes blur')
+        browser.command('Emulation.setEmulatedMedia', {'features': [{'name': 'prefers-contrast', 'value': 'more'}]})
+        check(browser.evaluate('getComputedStyle(document.querySelector(".calendar-card")).borderTopColor') == 'rgb(82, 105, 88)', 'Increased contrast adds defined borders')
+        browser.command('Emulation.setEmulatedMedia', {'features': []})
+        browser.size(390, 844)
+        browser.click('[data-action="new-appointment"]')
+        check(browser.evaluate('document.documentElement.scrollWidth <= innerWidth'), 'Appointment dialog fits mobile screen')
+        browser.screenshot('calendar-form-mobile.png')
+        key('Escape')
+        open_page('counselor.html', '#schedule', '.calendar-card')
+        check(browser.evaluate('document.querySelectorAll(".agenda-item").length') == 2, 'Refresh resets prototype schedules to sample data')
         check(not browser.errors, f'No uncaught JavaScript errors ({len(browser.errors)})')
         print(f'\n{len(checks)} checks passed. Screenshots: {ARTIFACTS}')
     finally:

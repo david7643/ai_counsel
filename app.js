@@ -11,6 +11,19 @@ const dateAt = offset => { const date = new Date(today); date.setDate(date.getDa
 const dateText = (date = today) => new Intl.DateTimeFormat('ko-KR', { month: 'long', day: 'numeric', weekday: 'long' }).format(date);
 const shortDate = date => `${String(date.getMonth() + 1).padStart(2, '0')}.${String(date.getDate()).padStart(2, '0')}`;
 const timeText = () => new Intl.DateTimeFormat('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date());
+// Each HTML entry point owns its workspace. A hash cannot change the role.
+const workspaceRole = document.body.dataset.workspace === 'counselor' ? 'counselor' : 'client';
+const dateKey = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+const parseDateKey = value => new Date(`${value}T12:00:00`);
+const sessionTypes = { personal: '개인 상담', initial: '초기 상담', video: '화상 상담' };
+const seedAppointments = [
+  { id: 'sample-1', date: dateKey(today), time: '14:00', duration: 50, clientId: 'jiwoo', type: 'personal', note: '' },
+  { id: 'sample-2', date: dateKey(today), time: '16:00', duration: 50, clientId: 'dohyun', type: 'initial', note: '' },
+  { id: 'sample-3', date: dateKey(dateAt(2)), time: '10:00', duration: 50, clientId: 'haeun', type: 'video', note: '' },
+  { id: 'sample-4', date: dateKey(dateAt(5)), time: '11:00', duration: 50, clientId: 'jiwoo', type: 'personal', note: '' },
+  { id: 'sample-5', date: dateKey(dateAt(-3)), time: '13:00', duration: 50, clientId: 'dohyun', type: 'personal', note: '' },
+  { id: 'sample-6', date: dateKey(dateAt(8)), time: '15:00', duration: 50, clientId: 'haeun', type: 'video', note: '' },
+];
 
 const paths = {
   home: '<path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1Z"/>',
@@ -66,11 +79,13 @@ const seedHistory = [
   { title: '조금은 나에게 다정해지기로 했어요', subtitle: '작은 쉼과 나를 돌보는 방법', offset: -3, theme: '자기 돌봄', text: '오늘은 점심시간에 잠깐 산책했어요. 별것 아닌데 기분이 좀 나아지더라고요. 이런 시간을 더 만들어보고 싶어요.' },
 ];
 const state = {
-  role: 'client', page: 'home', mobileMenu: false, notificationsRead: false,
+  role: workspaceRole, page: workspaceRole === 'client' ? 'home' : 'overview', mobileMenu: false, notificationsRead: false,
   mood: null, moodValues: [2, 3, 2, 4, 3, 4, null],
   messages: [{ role: 'assistant', text: welcome, time: '지금' }], isTyping: false,
   chatDraft: '', journalDraft: '', reportNote: '', counselorNotes: {}, shared: false,
-  appointment: null, query: '', selectedClient: 'seoyeon', replyTimer: null,
+  appointments: seedAppointments.map(item => ({ ...item })), calendarMonth: new Date(today.getFullYear(), today.getMonth(), 1),
+  selectedDate: dateKey(today), calendarFilter: 'all', editingAppointment: null, canceledAppointment: null,
+  query: '', selectedClient: 'seoyeon', replyTimer: null,
   journals: [
     { id: 1, offset: -1, mood: 2, title: '나의 속도로 걸어도 괜찮아', text: '오늘도 바쁜 하루였지만, 집에 오는 길에 좋아하는 음악을 들었어요. 잠깐이나마 마음이 편안해졌어요. 내일은 나를 위한 시간을 조금 더 만들어보려고요.', sample: true },
     { id: 2, offset: -3, mood: 3, title: '점심시간의 작은 산책', text: '일을 잠시 내려놓고 동네를 걸었어요. 바람이 시원해서 생각이 조금 가벼워졌어요. 나를 돌보는 일이 대단한 일일 필요는 없겠다고 느꼈어요.', sample: true },
@@ -92,6 +107,7 @@ function render(options = {}) {
     <button class="mobile-backdrop ${state.mobileMenu ? 'open' : ''}" data-action="menu-close" aria-label="메뉴 닫기" tabindex="-1"></button>
     <aside class="sidebar ${state.mobileMenu ? 'open' : ''}" id="sidebar" aria-label="주 메뉴">
       <a href="#${state.role === 'client' ? 'home' : 'overview'}" class="brand" aria-label="마음결 홈"><span class="brand-symbol">${brandSymbol}</span><div><div class="brand-name">마음결</div><div class="brand-en">MAEUMGYEOL</div></div></a>
+      <div class="workspace-identity">${icon(state.role === 'client' ? 'heart' : 'shield')}${state.role === 'client' ? '내담자 전용 공간' : '상담사 전용 공간'}</div>
       <div class="space-label">${state.role === 'client' ? 'MY LITTLE SANCTUARY' : 'COUNSELOR WORKSPACE'}</div>
       <nav class="nav-list">${nav.map(item => `<button class="nav-item ${(state.page === item.id || (item.id === 'reports' && state.page === 'detail')) ? 'active' : ''}" data-page="${item.id}" ${state.page === item.id ? 'aria-current="page"' : ''}>${icon(item.icon)}<span>${item.text}</span>${state.page === item.id ? '<span class="nav-dot"></span>' : ''}</button>`).join('')}</nav>
       <div class="sidebar-note">${icon('leaf')}<strong>${state.role === 'client' ? '조금 느려도 괜찮아요' : '이해에서 시작하는 상담'}</strong><p>${state.role === 'client' ? '나만의 속도로 마음을 살피는 곳.<br>마음결이 함께할게요.' : '대화의 맥락을 먼저 살피고,<br>더 깊은 이야기를 나눠보세요.'}</p></div>
@@ -101,11 +117,12 @@ function render(options = {}) {
       <header class="topbar">
         <button class="icon-button mobile-toggle" data-action="menu" aria-label="주 메뉴 열기" aria-controls="sidebar" aria-expanded="${state.mobileMenu}">${icon('menu')}</button>
         <div class="breadcrumb">${state.role === 'client' ? '나를 위한 작은 공간' : '마음결 상담사 워크스페이스'}${icon('chevron')}<strong>${pageNames[state.page]}</strong></div>
-        <div class="topbar-actions"><div class="role-switch" role="group" aria-label="체험 화면 선택"><button data-role="client" class="${state.role === 'client' ? 'selected' : ''}" aria-pressed="${state.role === 'client'}">내담자 공간</button><button data-role="counselor" class="${state.role === 'counselor' ? 'selected' : ''}" aria-pressed="${state.role === 'counselor'}">상담사 공간</button></div><button class="icon-button" data-action="notifications" aria-label="${state.notificationsRead ? '알림' : '새 알림 확인'}">${icon('bell')}${state.notificationsRead ? '' : '<span class="notification-dot"></span>'}</button><button class="profile-mini" data-action="profile" aria-label="체험 프로필 확인"><span class="avatar ${state.role === 'counselor' ? 'sage' : ''}">${state.role === 'client' ? '서연' : '지은'}</span><span>${state.role === 'client' ? '서연님' : '김지은 상담사'}</span>${icon('down')}</button></div>
+        <span class="workspace-mobile-label">${state.role === 'client' ? '내담자 공간' : '상담사 워크스페이스'}</span>
+        <div class="topbar-actions"><button class="icon-button" data-action="notifications" aria-label="${state.notificationsRead ? '알림' : '새 알림 확인'}">${icon('bell')}${state.notificationsRead ? '' : '<span class="notification-dot"></span>'}</button><button class="profile-mini" data-action="profile" aria-label="체험 프로필 확인"><span class="avatar ${state.role === 'counselor' ? 'sage' : ''}">${state.role === 'client' ? '서연' : '지은'}</span><span>${state.role === 'client' ? '서연님' : '김지은 상담사'}</span>${icon('down')}</button></div>
       </header>
       <main class="main-content" id="main-content" tabindex="-1">${renderPage()}</main>
     </div></div>`;
-  document.title = `${pageNames[state.page]} · 마음결`;
+  document.title = `${pageNames[state.page]} · 마음결 ${state.role === 'client' ? '내담자 공간' : '상담사 공간'}`;
   updateMobileAccessibility();
   if (state.page === 'chat') { const list = $('#chat-messages'); list.scrollTop = list.scrollHeight; }
   if (options.focus) requestAnimationFrame(() => $('#main-content')?.focus({ preventScroll: true }));
@@ -174,7 +191,7 @@ function reportPage(professional) {
   const isSeoyeon = person.id === 'seoyeon';
   const reportValues = isSeoyeon ? '' : '<p class="topic-description">아래 추이는 제품 화면 설명을 위한 공통 샘플입니다.</p>';
   return `${professional ? '<button class="back-button" data-page="reports">' + icon('back') + '리포트 목록으로</button>' : ''}${heading(professional ? 'UNDERSTANDING BEFORE COUNSELING' : 'A BRIDGE TO UNDERSTANDING', professional ? `${person.name}님의 대화 분석 리포트` : '이야기 속에 담긴, 나의 마음', professional ? '내담자가 동의한 대화를 바탕으로 상담을 준비하는 참고 자료예요.' : '말로 꺼내기 어려웠던 마음을, 차분하게 살펴보세요.')}
-  <div class="report-banner">${icon('shield')}<p><strong>${professional ? '상담 준비를 돕는 샘플 리포트' : '공유하기 전, 먼저 살펴보세요.'}</strong><br>${professional ? '임상 진단이나 위험도 평가가 아닙니다. 요약과 해석은 내담자와 함께 확인해 주세요.' : '공유 항목을 확인하고 직접 동의한 뒤에만 상담사 공간에 표시돼요.'}</p>${!professional ? `<button class="secondary-button" data-action="share">${state.shared ? '공유 설정 관리' : '공유 항목 확인'}</button>` : '<span class="small-tag">가상 내담자</span>'}</div>
+  <div class="report-banner">${icon('shield')}<p><strong>${professional ? '상담 준비를 돕는 샘플 리포트' : '공유하기 전, 먼저 살펴보세요.'}</strong><br>${professional ? '임상 진단이나 위험도 평가가 아닙니다. 요약과 해석은 내담자와 함께 확인해 주세요.' : '공유 항목을 확인하고 직접 동의할 공유 항목을 직접 선택할 수 있어요.'}</p>${!professional ? `<button class="secondary-button" data-action="share">${state.shared ? '공유 설정 관리' : '공유 항목 확인'}</button>` : '<span class="small-tag">가상 내담자</span>'}</div>
   <div class="wide-grid"><article class="card report-paper" aria-label="마음 리포트"><div class="report-title-row"><div><div class="eyebrow">MAEUMGYEOL · PERSONAL INSIGHT</div><h2>${person.name}님의 마음 리포트</h2><p>${shortDate(dateAt(-6))} – ${shortDate(today)} · 가상 대화 ${person.count}회 기준</p></div><span class="status-pill ${isSeoyeon && !state.shared ? 'pending' : ''}">${isSeoyeon ? state.shared ? '공유 동의됨 · 데모' : '나만 보는 리포트' : '샘플 공유 동의됨'}</span></div>
   <section class="report-section"><h3><span class="section-number">01</span>최근 이야기 한눈에 보기</h3><p>${person.note}</p><div class="report-facts"><div class="fact"><span>샘플 대화</span><strong>${person.count}<small>회</small></strong></div><div class="fact"><span>다룬 주제</span><strong>${person.topics.split(', ').length}<small>가지</small></strong></div><div class="fact"><span>살펴본 기간</span><strong>7<small>일</small></strong></div></div></section>
   <section class="report-section"><h3><span class="section-number">02</span>감정 기록의 흐름</h3><p>스스로 남긴 기분을 1~5점으로 나타냈어요. 의학적 척도나 우울·불안의 진단 점수가 아닙니다.</p>${reportValues}${trendChart(true)}<p style="font-size:10px">${isSeoyeon ? '이전 6일은 샘플 기록이며, 오늘의 체크인은 직접 선택한 값이 반영돼요.' : '실제 검사 결과가 없는 가상 데이터예요. 임상적 판단에 사용할 수 없습니다.'}</p></section>
@@ -189,14 +206,17 @@ function reportPage(professional) {
 function canView(person) { return person.id !== 'seoyeon' || state.shared; }
 function clientTable(onlyReports = false) {
   const filtered = clients.filter(person => (!onlyReports || canView(person)) && `${person.name} ${person.topics}`.includes(state.query.trim()));
-  return `<div class="table-wrapper"><table class="client-table"><caption class="sr-only">가상 내담자의 공유 리포트 현황</caption><thead><tr><th scope="col">내담자</th><th scope="col">최근 대화 주제</th><th scope="col">대화</th><th scope="col">최근 기록</th><th scope="col">공유 동의</th><th scope="col">리포트</th></tr></thead><tbody>${filtered.length ? filtered.map(person => `<tr><td><span class="client-name"><span class="avatar ${person.id === 'dohyun' ? 'sage' : ''}">${person.initials}</span>${person.name}<span class="muted" style="font-weight:400;font-size:9px">${person.age}</span></span></td><td>${person.topics}</td><td>${person.count}회</td><td>${shortDate(dateAt(person.offset))}</td><td><span class="status-pill ${canView(person) ? '' : 'pending'}">${canView(person) ? '동의 완료' : '동의 대기'}</span></td><td><button class="table-button" data-client="${person.id}" ${canView(person) ? '' : 'disabled title="내담자 공간에서 공유에 동의하면 열람할 수 있어요."'}>리포트 보기</button></td></tr>`).join('') : '<tr><td colspan="6" style="text-align:center;padding:35px">검색 결과가 없어요. 이름이나 주제를 다시 입력해 주세요.</td></tr>'}</tbody></table></div>`;
+  return `<div class="table-wrapper"><table class="client-table"><caption class="sr-only">가상 내담자의 공유 리포트 현황</caption><thead><tr><th scope="col">내담자</th><th scope="col">최근 대화 주제</th><th scope="col">대화</th><th scope="col">최근 기록</th><th scope="col">공유 동의</th><th scope="col">리포트</th></tr></thead><tbody>${filtered.length ? filtered.map(person => `<tr><td><span class="client-name"><span class="avatar ${person.id === 'dohyun' ? 'sage' : ''}">${person.initials}</span>${person.name}<span class="muted" style="font-weight:400;font-size:9px">${person.age}</span></span></td><td>${person.topics}</td><td>${person.count}회</td><td>${shortDate(dateAt(person.offset))}</td><td><span class="status-pill ${canView(person) ? '' : 'pending'}">${canView(person) ? '동의 완료' : '동의 대기'}</span></td><td><button class="table-button" data-client="${person.id}" ${canView(person) ? '' : 'disabled title="공유 동의 대기 상태의 샘플 리포트입니다."'}>리포트 보기</button></td></tr>`).join('') : '<tr><td colspan="6" style="text-align:center;padding:35px">검색 결과가 없어요. 이름이나 주제를 다시 입력해 주세요.</td></tr>'}</tbody></table></div>`;
 }
 function searchToolbar(title) { return `<div class="table-toolbar"><h2>${title}</h2><label class="search-field">${icon('search')}<span class="sr-only">내담자 이름 또는 주제 검색</span><input id="client-search" type="search" placeholder="이름이나 대화 주제로 검색" value="${escapeHTML(state.query)}" /></label></div>`; }
+function appointmentsFor(date, filtered = false) {
+  return state.appointments.filter(item => item.date === date && (!filtered || state.calendarFilter === 'all' || item.type === state.calendarFilter)).sort((a, b) => a.time.localeCompare(b.time));
+}
+const timeMinutes = value => { const [hours, minutes] = value.split(':').map(Number); return hours * 60 + minutes; };
+const endTime = item => { const end = timeMinutes(item.time) + item.duration; return `${String(Math.floor(end / 60)).padStart(2, '0')}:${String(end % 60).padStart(2, '0')}`; };
 function scheduleList() {
-  const items = [{ time: '14:00', name: '김지우', type: '개인 상담 · 50분', id: 'jiwoo' }, { time: '16:00', name: '박도현', type: '초기 상담 · 50분', id: 'dohyun' }];
-  if (state.appointment) items.push({ time: state.appointment.time, name: clients.find(c => c.id === state.appointment.clientId).name, type: '새로 선택한 일정 · 이 탭에서만 유지', id: state.appointment.clientId });
-  items.sort((a, b) => a.time.localeCompare(b.time));
-  return items.map(item => `<div class="schedule-item"><span class="schedule-time">${item.time}</span><div class="schedule-info"><strong>${item.name} 님</strong><p>${item.type}</p></div><button class="text-link" data-client="${item.id}">리포트${icon('chevron')}</button></div>`).join('');
+  const items = appointmentsFor(dateKey(today));
+  return items.length ? items.map(item => `<div class="schedule-item"><span class="schedule-time">${item.time}</span><div class="schedule-info"><strong>${clients.find(client => client.id === item.clientId).name} 님</strong><p>${sessionTypes[item.type]} · ${item.duration}분</p></div><button class="text-link" data-edit-appointment="${item.id}" aria-label="${item.time} 상담 일정 수정">일정 관리${icon('chevron')}</button></div>`).join('') : '<p class="schedule-empty-inline">오늘은 등록된 상담이 없습니다.</p>';
 }
 function counselorPage() {
   const sharedCount = clients.filter(canView).length;
@@ -204,25 +224,61 @@ function counselorPage() {
   <div class="stats-row">${[
     { label: '함께하는 내담자', value: 4, unit: '명', foot: '모두 가상 내담자입니다', icon: 'users' },
     { label: '공유된 마음 리포트', value: sharedCount, unit: '건', foot: '내담자가 공유에 동의한 리포트', icon: 'report' },
-    { label: '오늘의 상담', value: 2 + Number(Boolean(state.appointment)), unit: '건', foot: '제품 체험을 위한 예시 일정', icon: 'calendar' },
+    { label: '오늘의 상담', value: appointmentsFor(dateKey(today)).length, unit: '건', foot: '캘린더에 등록된 오늘의 일정', icon: 'calendar' },
     { label: '공유 동의 대기', value: 4 - sharedCount, unit: '명', foot: '동의 전에는 리포트가 잠겨 있어요', icon: 'shield' },
   ].map(item => `<section class="card stat-card"><div class="stat-label">${item.label}${icon(item.icon)}</div><div class="stat-value">${item.value}<span>${item.unit}</span></div><div class="stat-foot">${item.foot}</div></section>`).join('')}</div>
   <section class="card table-card">${searchToolbar('내담자의 최근 이야기')}<div id="client-table-slot">${clientTable()}</div></section>
   <div class="counselor-lower"><section class="card schedule-card"><div class="card-head"><h2 class="card-title">오늘의 상담 일정</h2><button class="text-link" data-page="schedule">전체 일정${icon('chevron')}</button></div>${scheduleList()}</section><section class="card insight-card"><div class="card-head"><h2 class="card-title">대화를 더 깊게 만드는 준비</h2>${icon('leaf')}</div><p>리포트 속 요약은 대화의 시작점이에요.<br>내담자의 말로 다시 확인하며, 각자의 맥락을 함께 이해해 주세요.</p><div class="insight-line">${icon('shield')}샘플 분석은 임상 진단이나 위험도 평가가 아닙니다.</div><button class="text-link" data-page="reports" style="margin-top:17px">공유된 리포트 살펴보기${icon('arrow')}</button></section></div>`;
 }
-function clientsPage() { return `${heading('PEOPLE AND THEIR STORIES', '함께하는 내담자', '각자의 속도로 시작한 이야기들을 한곳에서 살펴보세요.')}<div class="report-banner">${icon('lock')}<p>가상 내담자 목록입니다. <strong>공유에 동의한 리포트만 열람할 수 있어요.</strong><br>서연님의 리포트는 내담자 공간에서 공유 동의를 체험한 뒤 열립니다.</p></div><section class="card table-card">${searchToolbar('전체 내담자 · 4명')}<div id="client-table-slot">${clientTable()}</div></section>`; }
+function clientsPage() { return `${heading('PEOPLE AND THEIR STORIES', '함께하는 내담자', '각자의 속도로 시작한 이야기들을 한곳에서 살펴보세요.')}<div class="report-banner">${icon('lock')}<p>가상 내담자 목록입니다. <strong>공유에 동의한 리포트만 열람할 수 있어요.</strong><br>서연님은 공유 동의 대기 상태의 예시입니다. 일정은 공유 동의와 관계없이 관리할 수 있어요.</p></div><section class="card table-card">${searchToolbar('전체 내담자 · 4명')}<div id="client-table-slot">${clientTable()}</div></section>`; }
 function reportsPage() { return `${heading('CONVERSATIONS INTO UNDERSTANDING', '대화 분석 리포트', '흩어져 있던 이야기를 이어, 상담의 시작을 조금 더 편안하게.')}<div class="report-banner">${icon('report')}<p><strong>대화에서 발견한 주제와 맥락을 살펴보세요.</strong><br>전체 대화 대신 동의한 요약과 발췌가 표시됩니다. 모든 분석은 예시 데이터입니다.</p></div><section class="card table-card">${searchToolbar(`공유 동의된 리포트 · ${clients.filter(canView).length}건`)}<div id="client-table-slot">${clientTable(true)}</div></section>`; }
-function schedulePage() { return `${heading('MAKE ROOM FOR CONVERSATION', '마음을 만나는 시간', '상담 전 리포트를 살펴보고, 한 사람의 이야기를 맞이할 준비를 해요.')}<div class="wide-grid"><section class="card schedule-card"><div class="card-head"><h2 class="card-title">${dateText()} · 상담 일정</h2><span class="small-tag">가상 일정</span></div>${scheduleList()}</section><aside class="aside-column"><section class="card report-sidebar"><h3>새 상담 일정 선택</h3><p>리포트에서 내담자를 선택한 뒤, 상담 시간을 지정할 수 있어요. 실제 예약은 진행되지 않습니다.</p><button class="primary-button" data-page="reports">${icon('report')}리포트에서 상담 준비하기</button>${state.appointment ? '<button class="secondary-button" data-action="cancel-appointment">체험으로 추가한 일정 취소</button>' : ''}</section></aside></div>`; }
+function schedulePage() {
+  const month = state.calendarMonth;
+  const monthLabel = `${month.getFullYear()}년 ${month.getMonth() + 1}월`;
+  const monthPrefix = dateKey(month).slice(0, 7);
+  const monthItems = state.appointments.filter(item => item.date.startsWith(monthPrefix));
+  const selected = appointmentsFor(state.selectedDate, true);
+  const selectedDate = parseDateKey(state.selectedDate);
+  const first = new Date(month.getFullYear(), month.getMonth(), 1 - month.getDay());
+  const cells = Array.from({ length: 42 }, (_, index) => {
+    const day = new Date(first); day.setDate(first.getDate() + index);
+    const key = dateKey(day), items = appointmentsFor(key, true);
+    const isToday = key === dateKey(today), isSelected = key === state.selectedDate;
+    return `<button class="calendar-day ${day.getMonth() !== month.getMonth() ? 'outside-month' : ''} ${isToday ? 'is-today' : ''} ${isSelected ? 'is-selected' : ''}" data-calendar-date="${key}" tabindex="${isSelected ? '0' : '-1'}" aria-pressed="${isSelected}" ${isToday ? 'aria-current="date"' : ''} aria-label="${day.getFullYear()}년 ${dateText(day)}, ${items.length}건${isToday ? ', 오늘' : ''}"><span class="calendar-day-number">${day.getDate()}</span><span class="calendar-events">${items.slice(0, 2).map(item => `<span class="calendar-event type-${item.type}"><span>${item.time}</span><strong>${clients.find(client => client.id === item.clientId).name}</strong></span>`).join('')}${items.length > 2 ? `<span class="calendar-more">+${items.length - 2}건 더</span>` : ''}</span><span class="calendar-mobile-dots" aria-hidden="true">${items.slice(0, 3).map(item => `<i class="type-${item.type}"></i>`).join('')}${items.length > 3 ? '<b>+</b>' : ''}</span></button>`;
+  });
+  return `${heading('A LITTLE SPACE, A DEEPER CONVERSATION', '상담 일정', '한 달의 흐름을 살피고, 한 사람을 위한 시간을 준비하세요.', `<button class="primary-button add-appointment" data-action="new-appointment">${icon('plus')}새 일정</button>`)}
+    <div class="calendar-summary" aria-label="상담 일정 요약"><div>${icon('calendar')}<span>조회 월 전체 일정<strong>${monthItems.length}<small>건</small></strong></span></div><div>${icon('sun')}<span>오늘의 상담<strong>${appointmentsFor(dateKey(today)).length}<small>건</small></strong></span></div><div>${icon('clock')}<span>조회 월 상담 시간<strong>${new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 1 }).format(monthItems.reduce((sum, item) => sum + item.duration, 0) / 60)}<small>시간</small></strong></span></div><p>차분한 준비가<br>좋은 대화의 시작이 되도록.</p></div>
+    <div class="calendar-layout"><section class="card calendar-card" aria-labelledby="calendar-month"><div class="calendar-toolbar"><div class="calendar-month-nav"><h2 id="calendar-month" aria-live="polite">${monthLabel}</h2><div><button class="icon-button" data-action="calendar-prev" aria-label="이전 달">${icon('chevron', 'rotate-chevron')}</button><button class="icon-button" data-action="calendar-next" aria-label="다음 달">${icon('chevron')}</button></div><button class="calendar-today" data-action="calendar-today">오늘</button></div><span class="calendar-view-label">월간 캘린더</span></div>
+    <div class="calendar-filter-row"><div class="calendar-filters" role="group" aria-label="상담 유형 필터">${[['all', '전체'], ...Object.entries(sessionTypes)].map(([key, label]) => `<button class="calendar-filter ${state.calendarFilter === key ? 'selected' : ''}" data-calendar-filter="${key}" aria-pressed="${state.calendarFilter === key}">${key !== 'all' ? `<i class="type-${key}"></i>` : ''}${label}</button>`).join('')}</div><span class="calendar-hint">날짜를 선택해 일정을 살펴보세요</span></div>
+    <div class="calendar-weekdays" aria-hidden="true">${['일', '월', '화', '수', '목', '금', '토'].map(day => `<span>${day}</span>`).join('')}</div><div class="calendar-grid" role="group" aria-label="${monthLabel} 날짜 선택. 방향키로 날짜, Page Up과 Page Down으로 월 이동">${cells.join('')}</div><button class="calendar-agenda-jump" data-action="agenda-focus">${selectedDate.getMonth() + 1}월 ${selectedDate.getDate()}일 · ${selected.length}건 일정 보기${icon('down')}</button><div class="calendar-footnote">${icon('shield')}예시 일정 · 변경 내용은 이 탭에서만 유지됩니다.</div></section>
+    <aside class="agenda-panel" aria-labelledby="agenda-title"><div class="agenda-heading"><div><span class="agenda-eyebrow">${state.selectedDate === dateKey(today) ? 'TODAY' : 'SELECTED DAY'}</span><h2 id="agenda-title" tabindex="-1">${selectedDate.getMonth() + 1}월 ${selectedDate.getDate()}일 <span>${new Intl.DateTimeFormat('ko-KR', { weekday: 'long' }).format(selectedDate)}</span></h2></div><span class="agenda-count" aria-label="현재 필터의 일정 ${selected.length}건">${selected.length}건</span></div><p class="agenda-description" aria-live="polite">${selected.length ? '상담을 선택해 일정을 변경할 수 있어요.' : (state.calendarFilter === 'all' ? '여유로운 하루, 새로운 만남을 준비해요.' : '선택한 유형의 상담이 없는 날이에요.')}</p>
+    <div class="agenda-items">${selected.length ? selected.map(item => {
+      const person = clients.find(client => client.id === item.clientId);
+      return `<article class="agenda-item type-${item.type}"><div class="agenda-time">${icon('clock')}<strong>${item.time}</strong><span>– ${endTime(item)}</span><span class="agenda-duration">${item.duration}분</span></div><div class="agenda-client"><span class="avatar ${item.type === 'initial' ? 'sage' : ''}">${person.initials}</span><div><h3>${person.name} <span>님</span></h3><p>${sessionTypes[item.type]}</p></div><button class="icon-button" data-edit-appointment="${item.id}" aria-label="${person.name} ${item.time} 일정 수정">${icon('edit')}</button></div>${item.note ? `<p class="agenda-note">${escapeHTML(item.note)}</p>` : ''}<div class="agenda-item-actions">${canView(person) ? `<button class="text-link" data-client="${person.id}">${icon('report')}리포트 보기</button>` : '<span class="agenda-consent">리포트 공유 동의 대기</span>'}<button class="agenda-cancel" data-cancel-appointment="${item.id}" aria-label="${person.name} ${item.time} 일정 취소">일정 취소</button></div></article>`;
+    }).join('') : `<div class="agenda-empty">${icon('calendar')}<strong>${state.calendarFilter === 'all' ? '등록된 일정이 없어요' : '해당 유형의 일정이 없어요'}</strong><p>${state.calendarFilter === 'all' ? '이날의 첫 상담을 추가해 보세요.' : '전체 필터에서 다른 상담을 확인할 수 있어요.'}</p>${state.calendarFilter !== 'all' ? '<button class="text-link" data-calendar-filter="all">전체 일정 보기</button>' : ''}</div>`}</div><button class="agenda-add" data-action="new-appointment">${icon('plus')}이 날짜에 일정 추가</button><div class="agenda-tip">${icon('leaf')}<p>일정 사이에 잠깐의 여백을 두고,<br>다음 이야기를 맞이해 보세요.</p></div></aside></div>`;
+}
+
+function selectCalendarDate(key, focus = true) {
+  state.selectedDate = key;
+  const date = parseDateKey(key);
+  state.calendarMonth = new Date(date.getFullYear(), date.getMonth(), 1);
+  render();
+  if (focus) $(`[data-calendar-date="${key}"]`)?.focus({ preventScroll: true });
+}
+function changeCalendarMonth(direction) {
+  const target = new Date(state.calendarMonth.getFullYear(), state.calendarMonth.getMonth() + direction, 1);
+  const lastDay = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
+  const selected = new Date(target.getFullYear(), target.getMonth(), Math.min(parseDateKey(state.selectedDate).getDate(), lastDay));
+  selectCalendarDate(dateKey(selected), false);
+  $(`[data-action="calendar-${direction < 0 ? 'prev' : 'next'}"]`)?.focus({ preventScroll: true });
+}
 
 function navigate(page, { focus = true } = {}) {
-  const oldRole = state.role;
-  if (clientNav.some(item => item.id === page)) state.role = 'client';
-  else if (counselorNav.some(item => item.id === page) || page === 'detail') state.role = 'counselor';
-  else page = state.role === 'client' ? 'home' : 'overview';
+  const allowed = workspaceRole === 'client' ? clientNav : counselorNav;
+  if (!allowed.some(item => item.id === page) && !(workspaceRole === 'counselor' && page === 'detail')) page = workspaceRole === 'client' ? 'home' : 'overview';
   if (page === 'detail' && !canView(clients.find(c => c.id === state.selectedClient) || clients[0])) page = 'reports';
   state.page = page;
   state.mobileMenu = false;
-  if (oldRole !== state.role) state.query = '';
   if (location.hash !== `#${page}`) history.replaceState(null, '', `#${page}`);
   render({ focus });
   window.scrollTo({ top: 0, behavior: 'instant' });
@@ -241,12 +297,22 @@ function updateMobileAccessibility() {
 }
 
 let toastTimer;
-function toast(text) {
+function toast(text, undo = false) {
   clearTimeout(toastTimer);
   const element = $('#toast');
+  element.inert = false;
   element.textContent = text;
+  if (undo) {
+    const button = document.createElement('button');
+    button.textContent = '되돌리기'; button.dataset.action = 'undo-cancel-appointment';
+    element.append(button);
+  }
   element.classList.add('visible');
-  toastTimer = setTimeout(() => element.classList.remove('visible'), 3500);
+  toastTimer = setTimeout(() => {
+    // Keep undo available while a keyboard user is interacting with it.
+    if (element.contains(document.activeElement)) return;
+    element.classList.remove('visible'); element.inert = true;
+  }, undo ? 10000 : 3500);
 }
 let modalReturnFocus = null;
 function openModal(title, content, actions = '') {
@@ -266,14 +332,58 @@ function closeModal() {
 }
 function shareDialog() {
   if (state.shared) {
-    openModal('내 이야기를 공유하는 방법', '<p>현재 이 탭의 상담사 공간에 서연님의 샘플 리포트가 표시되고 있어요. 언제든 공유 동의를 철회할 수 있습니다.</p><div class="modal-info"><strong>공유 중인 항목</strong><ul><li>대화 주제와 요약, 샘플 대화 발췌</li><li>일주일의 감정 기록 추이</li><li>직접 저장한 “함께 전하고 싶은 말”</li></ul></div><p style="margin-top:16px">실제 전송이나 외부 저장은 이루어지지 않습니다.</p>', '<button class="secondary-button" data-action="share-revoke">공유 동의 철회</button><button class="primary-button" data-action="modal-close">확인</button>');
+    openModal('내 이야기를 공유하는 방법', '<p>서연님의 샘플 리포트 공유에 동의한 상태예요. 언제든 공유 동의를 철회할 수 있습니다.</p><div class="modal-info"><strong>공유 중인 항목</strong><ul><li>대화 주제와 요약, 샘플 대화 발췌</li><li>일주일의 감정 기록 추이</li><li>직접 저장한 “함께 전하고 싶은 말”</li></ul></div><p style="margin-top:16px">실제 전송이나 외부 저장은 이루어지지 않습니다.</p>', '<button class="secondary-button" data-action="share-revoke">공유 동의 철회</button><button class="primary-button" data-action="modal-close">확인</button>');
     return;
   }
-  openModal('내가 선택하는 마음의 연결', `<p>김지은 상담사(가상 프로필)에게 보여줄 항목을 확인해 주세요. 동의하면 이 탭의 상담사 공간에서 리포트를 확인할 수 있어요.</p><div class="modal-info"><strong>리포트에 포함되는 내용</strong><ul><li>대화 주제와 요약, 샘플 대화 발췌</li><li>일주일의 감정 기록 추이</li><li>직접 저장한 “함께 전하고 싶은 말”</li></ul></div><p style="margin-top:15px;font-size:11px">감정 일기 원문과 현재 입력한 전체 대화는 포함되지 않아요. 실제 정보 전송이 없는 UI 체험이며, 동의는 언제든 철회할 수 있습니다.</p><label class="consent-label"><input id="share-consent" type="checkbox" /><span>위 항목을 확인했으며, 이 탭의 상담사 화면에 리포트를 표시하는 데 동의합니다.</span></label>`, '<button class="secondary-button" data-action="modal-close">다음에 할게요</button><button class="primary-button" id="share-confirm" data-action="share-confirm" disabled>동의하고 공유 체험</button>');
+  openModal('내가 선택하는 마음의 연결', `<p>김지은 상담사(가상 프로필)에게 보여줄 항목을 확인해 주세요. 이 화면에서 리포트 공유 동의 과정을 체험할 수 있어요.</p><div class="modal-info"><strong>리포트에 포함되는 내용</strong><ul><li>대화 주제와 요약, 샘플 대화 발췌</li><li>일주일의 감정 기록 추이</li><li>직접 저장한 “함께 전하고 싶은 말”</li></ul></div><p style="margin-top:15px;font-size:11px">감정 일기 원문과 현재 입력한 전체 대화는 포함되지 않아요. 실제 정보 전송이 없는 UI 체험이며, 동의는 언제든 철회할 수 있습니다.</p><label class="consent-label"><input id="share-consent" type="checkbox" /><span>위 항목을 확인했으며, 선택한 리포트 항목을 공유하는 데 동의합니다.</span></label>`, '<button class="secondary-button" data-action="modal-close">다음에 할게요</button><button class="primary-button" id="share-confirm" data-action="share-confirm" disabled>동의하고 공유 체험</button>');
 }
-function appointmentDialog() {
-  const person = clients.find(c => c.id === state.selectedClient);
-  openModal('다음 대화를 준비해요', `<p>${person.name} 님과의 ${dateText()} 상담 시간을 선택해 주세요. 실제 예약이나 알림은 전송되지 않아요.</p><div class="appointment-options" role="group" aria-label="상담 시간 선택">${['10:00', '11:00', '17:00'].map(time => `<button class="appointment-option" data-time="${time}" aria-pressed="false">${time}</button>`).join('')}</div><p style="margin-top:18px;font-size:10px">기존 체험 일정이 있으면 새로 선택한 시간으로 변경돼요.</p>`, '<button class="secondary-button" data-action="modal-close">취소</button><button class="primary-button" id="appointment-confirm" data-action="appointment-confirm" disabled>이 시간으로 선택</button>');
+function appointmentDialog({ id = null, clientId = null } = {}) {
+  if (workspaceRole !== 'counselor') return;
+  const item = state.appointments.find(appointment => appointment.id === id);
+  state.editingAppointment = item?.id || null;
+  openModal(item ? '상담 일정 수정' : '새 상담 일정', `<p>한 사람의 이야기를 위한 시간을 마련하세요.</p><form id="appointment-form" class="appointment-form"><label for="appointment-client">내담자<select id="appointment-client" name="clientId" required>${clients.map(person => `<option value="${person.id}" ${person.id === (item?.clientId || clientId || 'jiwoo') ? 'selected' : ''}>${person.name}</option>`).join('')}</select></label><label for="appointment-date">상담 날짜<input id="appointment-date" name="date" type="date" min="1900-01-01" max="2100-12-31" value="${item?.date || state.selectedDate}" required /></label><div class="appointment-form-row"><label for="appointment-time">시작 시간<input id="appointment-time" name="time" type="time" step="300" value="${item?.time || '09:00'}" aria-describedby="appointment-error" required /></label><label for="appointment-duration">소요 시간<select id="appointment-duration" name="duration">${[30, 50, 60, 90].map(duration => `<option value="${duration}" ${duration === (item?.duration || 50) ? 'selected' : ''}>${duration}분</option>`).join('')}</select></label></div><label for="appointment-type">상담 유형<select id="appointment-type" name="type">${Object.entries(sessionTypes).map(([key, label]) => `<option value="${key}" ${key === (item?.type || 'personal') ? 'selected' : ''}>${label}</option>`).join('')}</select></label><label for="appointment-note">준비 메모 <span class="optional-label">선택</span><textarea id="appointment-note" name="note" maxlength="300" rows="2" placeholder="상담 전에 기억할 내용을 남겨보세요.">${escapeHTML(item?.note || '')}</textarea></label><p class="appointment-error" id="appointment-error" role="status" aria-live="polite"></p><p class="appointment-form-footnote">${icon('lock')}이 탭에서만 저장되는 예시 일정입니다.</p></form>`, `<button class="secondary-button" data-action="modal-close">돌아가기</button><button class="primary-button" type="submit" form="appointment-form" id="appointment-save">${item ? '변경사항 저장' : '일정 추가'}</button>`);
+}
+function appointmentDraft() {
+  const form = $('#appointment-form');
+  if (!form) return null;
+  const fields = new FormData(form);
+  return { id: state.editingAppointment || `local-${Date.now()}`, clientId: fields.get('clientId'), date: fields.get('date'), time: fields.get('time'), duration: Number(fields.get('duration')), type: fields.get('type'), note: fields.get('note').trim() };
+}
+function appointmentConflict(item) {
+  const start = timeMinutes(item.time), end = start + item.duration;
+  return state.appointments.find(other => other.id !== item.id && other.date === item.date && start < timeMinutes(other.time) + other.duration && end > timeMinutes(other.time));
+}
+function validateAppointment() {
+  const draft = appointmentDraft();
+  if (!draft) return false;
+  const input = $('#appointment-time');
+  const conflict = draft.time && draft.date ? appointmentConflict(draft) : null;
+  const message = timeMinutes(draft.time) + draft.duration > 1440 ? '상담이 자정을 넘지 않도록 시작 시간이나 소요 시간을 조정해 주세요.' : conflict ? `${conflict.time}–${endTime(conflict)} 상담과 시간이 겹칩니다. 다른 시간을 선택해 주세요.` : '';
+  input.setCustomValidity(message);
+  input.setAttribute('aria-invalid', String(Boolean(message)));
+  $('#appointment-error').textContent = message;
+  return !message;
+}
+function saveAppointment() {
+  if (!validateAppointment() || !$('#appointment-form').reportValidity()) return;
+  const draft = appointmentDraft(), editing = Boolean(state.editingAppointment);
+  if (!clients.some(client => client.id === draft.clientId) || !sessionTypes[draft.type]) return;
+  state.appointments = [...state.appointments.filter(item => item.id !== draft.id), draft];
+  state.selectedDate = draft.date;
+  const date = parseDateKey(draft.date);
+  state.calendarMonth = new Date(date.getFullYear(), date.getMonth(), 1);
+  state.calendarFilter = 'all';
+  closeModal(); navigate('schedule');
+  toast(editing ? '상담 일정을 변경했어요.' : '새 상담 일정을 추가했어요.');
+}
+function cancelAppointment(id) {
+  const item = state.appointments.find(appointment => appointment.id === id);
+  if (!item) return;
+  state.canceledAppointment = item;
+  state.appointments = state.appointments.filter(appointment => appointment.id !== id);
+  render();
+  $('.agenda-add')?.focus({ preventScroll: true });
+  toast('상담 일정을 취소했어요.', true);
 }
 function historyDialog(index) {
   const item = seedHistory[index];
@@ -316,8 +426,8 @@ const actions = {
   'menu-close': () => { state.mobileMenu = false; render(); $('.mobile-toggle')?.focus(); },
   'modal-close': closeModal,
   'share': shareDialog,
-  'share-confirm': () => { if (!$('#share-consent')?.checked) return; state.shared = true; closeModal(); render({ focus: true }); toast('공유에 동의했어요. 상담사 공간에서 리포트를 확인해 보세요.'); },
-  'share-revoke': () => { state.shared = false; closeModal(); if (state.role === 'counselor' && state.page === 'detail' && state.selectedClient === 'seoyeon') navigate('reports'); else render({ focus: true }); toast('공유 동의를 철회했어요. 상담사 공간에서 리포트가 잠겼어요.'); },
+  'share-confirm': () => { if (!$('#share-consent')?.checked) return; state.shared = true; closeModal(); render({ focus: true }); toast('리포트 공유 동의를 이 화면에 반영했어요.'); },
+  'share-revoke': () => { state.shared = false; closeModal(); if (state.role === 'counselor' && state.page === 'detail' && state.selectedClient === 'seoyeon') navigate('reports'); else render({ focus: true }); toast('리포트 공유 동의를 철회했어요.'); },
   'print': () => window.print(),
   'save-note': () => {
     const value = $('#report-note').value.trim();
@@ -325,19 +435,32 @@ const actions = {
     else state.reportNote = value;
     render({ focus: true }); toast('메모를 이 탭에 저장했어요.');
   },
-  'appointment': appointmentDialog,
-  'appointment-confirm': () => { const selected = $('.appointment-option.selected'); if (!selected) return; state.appointment = { time: selected.dataset.time, clientId: state.selectedClient }; closeModal(); navigate('schedule'); toast('이 탭의 예시 일정에 추가했어요. 실제 예약은 진행되지 않았어요.'); },
-  'cancel-appointment': () => { openModal('체험 일정을 취소할까요?', '<p>직접 추가한 일정만 삭제됩니다. 기존 샘플 일정은 유지돼요.</p>', '<button class="secondary-button" data-action="modal-close">돌아가기</button><button class="primary-button" data-action="confirm-cancel-appointment">일정 취소</button>'); },
-  'confirm-cancel-appointment': () => { state.appointment = null; closeModal(); render({ focus: true }); toast('체험으로 추가한 일정을 취소했어요.'); },
+  'appointment': () => appointmentDialog({ clientId: state.selectedClient }),
+  'new-appointment': () => appointmentDialog(),
+  'calendar-prev': () => changeCalendarMonth(-1),
+  'calendar-next': () => changeCalendarMonth(1),
+  'calendar-today': () => selectCalendarDate(dateKey(today)),
+  'agenda-focus': () => {
+    const title = $('#agenda-title');
+    title?.focus({ preventScroll: true });
+    title?.scrollIntoView({ block: 'start', behavior: 'instant' });
+  },
+  'undo-cancel-appointment': () => {
+    const item = state.canceledAppointment;
+    if (!item) return;
+    if (appointmentConflict(item)) { toast('다른 상담과 시간이 겹쳐 복원할 수 없어요. 새 일정으로 시간을 선택해 주세요.'); return; }
+    state.appointments.push(item); state.canceledAppointment = null;
+    state.calendarFilter = 'all'; selectCalendarDate(item.date); toast('취소한 상담 일정을 되돌렸어요.');
+  },
   'go-chat': () => { closeModal(); navigate('chat'); },
   'new-chat': () => { openModal('새로운 마음 대화를 시작할까요?', '<p>현재 탭에 입력한 대화는 지워져요. 지난 샘플 대화와 감정 기록은 유지됩니다.</p>', '<button class="secondary-button" data-action="modal-close">이어서 이야기하기</button><button class="primary-button" data-action="confirm-new-chat">새 대화 시작</button>'); },
   'confirm-new-chat': () => { clearTimeout(state.replyTimer); state.isTyping = false; state.chatDraft = ''; state.messages = [{ role: 'assistant', text: welcome, time: '지금' }]; closeModal(); render(); $('#chat-input')?.focus(); toast('새로운 마음 대화를 시작해요.'); },
   'journal-prompt': () => { state.journalDraft = '오늘 나를 조금 편안하게 해준 것은…\n'; render(); $('#journal-input').focus(); $('#journal-input').setSelectionRange(state.journalDraft.length, state.journalDraft.length); },
   'history-all': () => { openModal('지난 마음 대화 모아보기', `<div class="dialog-list">${seedHistory.map((item, index) => `<button class="history-row" data-history="${index}"><span class="history-icon">${icon('chat')}</span><span class="history-copy"><strong>${item.title}</strong><span>${shortDate(dateAt(item.offset))} · 샘플 대화</span></span>${icon('chevron')}</button>`).join('')}</div>`); },
-  'notifications': () => { state.notificationsRead = true; $('.notification-dot')?.remove(); openModal('마음결의 작은 소식', '<div class="dialog-list"><div class="dialog-list-item"><strong>서두르지 않아도 괜찮아요 🌿</strong><p>오늘의 마음을 체크하고, 편한 이야기부터 시작해 보세요. 대화와 감정 기록을 둘러볼 수 있어요.</p></div><div class="dialog-list-item"><strong>내담자와 상담사, 두 공간을 체험해 보세요</strong><p>상단의 공간 전환으로 상담사 화면을 열 수 있어요. 서연님의 리포트는 공유 동의 후에 표시됩니다.</p></div></div>'); },
-  'profile': () => openModal('지금 체험 중인 프로필', `<p>${state.role === 'client' ? '이서연 · 내담자' : '김지은 · 마음숲 심리상담센터 상담사'}</p><div class="modal-info"><strong>제품을 둘러보기 위한 가상 계정이에요.</strong><ul><li>회원가입이나 실제 로그인이 필요하지 않아요.</li><li>상단 버튼으로 두 역할을 바꿔볼 수 있어요.</li><li>새로고침하면 입력과 선택이 초기화돼요.</li></ul></div>`),
-  'privacy': () => openModal('내 마음의 주인은 나니까', `<p>이 프로토타입에서 입력한 대화, 일기, 메모는 현재 탭의 메모리에만 유지됩니다. 새로고침하거나 탭을 닫으면 사라져요.</p><div class="modal-info"><strong>공유와 보관 안내</strong><ul><li>외부 AI, 서버, 분석 도구로 입력을 전송하지 않아요.</li><li>대화와 일기 원문은 상담사 화면에 표시되지 않아요.</li><li>공유 동의 시 요약 리포트와 저장한 메모만 표시해요.</li><li>서체를 불러올 때 Google Fonts에 접속할 수 있어요.</li></ul></div><p style="margin-top:17px">현재 리포트 공유: <strong>${state.shared ? '동의됨 · 이 탭에서만 표시' : '미동의'}</strong></p>`, `${state.shared ? '<button class="secondary-button" data-action="share-revoke">공유 동의 철회</button>' : ''}<button class="primary-button" data-action="modal-close">확인했어요</button>`),
-  'help': () => openModal('마음결, 이렇게 만나보세요', '<div class="dialog-list"><div class="dialog-list-item"><strong>01 · 내 마음과 마주하기</strong><p>홈에서 기분을 선택하고, 마음 대화에서 이야기를 나눠보세요. 대화 응답은 정해진 문구를 사용하는 예시입니다.</p></div><div class="dialog-list-item"><strong>02 · 나를 이해하는 기록</strong><p>감정 기록에서 하루를 남기고, 나의 마음 리포트에서 샘플 분석과 함께 전할 메모를 확인하세요.</p></div><div class="dialog-list-item"><strong>03 · 상담사에게 이어지기</strong><p>리포트 공유에 동의한 뒤 상단에서 상담사 공간으로 전환하세요. 리포트 열람, 상담 준비 메모, 예시 일정 선택을 체험할 수 있습니다.</p></div></div><p style="margin-top:18px;font-size:10px">이 서비스는 감정 정리와 상담 준비를 돕는 UI 프로토타입으로, 전문가의 진단과 상담을 대신하지 않습니다.</p>'),
+  'notifications': () => { state.notificationsRead = true; $('.notification-dot')?.remove(); openModal('마음결의 작은 소식', state.role === 'client' ? '<div class="dialog-list-item"><strong>서두르지 않아도 괜찮아요 🌿</strong><p>오늘의 마음을 체크하고, 편한 이야기부터 시작해 보세요. 대화와 감정 기록을 둘러볼 수 있어요.</p></div>' : '<div class="dialog-list-item"><strong>차분하게, 오늘의 상담 준비</strong><p>상담 일정에서 오늘의 만남을 확인하세요. 날짜를 선택하면 일정을 추가하거나 변경할 수 있어요.</p></div>'); },
+  'profile': () => openModal('지금 체험 중인 프로필', `<p>${state.role === 'client' ? '이서연 · 내담자' : '김지은 · 마음숲 심리상담센터 상담사'}</p><div class="modal-info"><strong>제품을 둘러보기 위한 가상 계정이에요.</strong><ul><li>회원가입이나 실제 로그인이 필요하지 않아요.</li><li>현재 역할에 맞는 전용 공간을 사용하고 있어요.</li><li>새로고침하면 입력과 선택이 초기화돼요.</li></ul></div>`),
+  'privacy': () => openModal(state.role === 'client' ? '내 마음의 주인은 나니까' : '상담 자료와 개인정보', `<p>입력 내용은 현재 탭의 메모리에만 유지되며, 새로고침하거나 탭을 닫으면 사라져요.</p><div class="modal-info"><strong>공유와 보관 안내</strong><ul><li>외부 AI, 서버, 분석 도구로 입력을 전송하지 않아요.</li><li>모든 프로필과 리포트는 가상 데이터입니다.</li><li>${state.role === 'client' ? '공유 동의 과정은 이 내담자 화면에서 체험할 수 있어요. 별도 상담사 화면과 데이터가 연동되지는 않습니다.' : '공유 동의된 샘플 리포트만 열람할 수 있어요. 내담자 화면의 입력과는 연동되지 않습니다.'}</li><li>전체 대화와 일기 원문은 상담사 리포트에 포함하지 않아요.</li></ul></div>${state.role === 'client' ? `<p style="margin-top:17px">현재 리포트 공유: <strong>${state.shared ? '동의됨 · 체험' : '미동의'}</strong></p>` : ''}`, `${state.role === 'client' && state.shared ? '<button class="secondary-button" data-action="share-revoke">공유 동의 철회</button>' : ''}<button class="primary-button" data-action="modal-close">확인했어요</button>`),
+  'help': () => openModal('마음결, 이렇게 만나보세요', state.role === 'client' ? '<div class="dialog-list"><div class="dialog-list-item"><strong>01 · 내 마음과 마주하기</strong><p>홈에서 기분을 선택하고, 마음 대화에서 이야기를 나눠보세요. 대화 응답은 정해진 문구를 사용하는 예시입니다.</p></div><div class="dialog-list-item"><strong>02 · 나를 이해하는 기록</strong><p>감정 기록에서 하루를 남기고, 나의 마음 리포트에서 샘플 분석과 함께 전할 메모를 확인하세요.</p></div><div class="dialog-list-item"><strong>03 · 내가 선택하는 공유</strong><p>리포트의 공유 항목을 확인하고 동의 과정을 체험하세요. 공유 설정에서 동의를 철회할 수 있어요.</p></div></div>' : '<div class="dialog-list"><div class="dialog-list-item"><strong>01 · 상담 전 이야기 살펴보기</strong><p>내담자를 검색하고 공유 동의된 리포트를 확인하세요. 상담 준비 메모를 남길 수 있어요.</p></div><div class="dialog-list-item"><strong>02 · 캘린더로 만남 준비하기</strong><p>상담 일정에서 월별 일정을 확인하고 날짜를 선택하세요. 새 일정을 추가하거나 기존 일정을 수정할 수 있어요.</p></div><div class="dialog-list-item"><strong>03 · 편하게 일정 조정하기</strong><p>상담 시간이 겹치면 바로 안내해 드려요. 일정을 취소했다면 알림의 되돌리기로 복원할 수 있어요.</p></div></div>'),
 };
 
 document.addEventListener('click', event => {
@@ -345,7 +468,13 @@ document.addEventListener('click', event => {
   if (!button || button.disabled) return;
   if (button.dataset.action) actions[button.dataset.action]?.();
   else if (button.dataset.page) navigate(button.dataset.page);
-  else if (button.dataset.role) { state.query = ''; state.role = button.dataset.role; navigate(state.role === 'client' ? 'home' : 'overview'); }
+  else if (button.dataset.calendarDate) selectCalendarDate(button.dataset.calendarDate);
+  else if (button.dataset.calendarFilter) {
+    state.calendarFilter = button.dataset.calendarFilter; render();
+    $(`.calendar-filter[data-calendar-filter="${state.calendarFilter}"]`)?.focus({ preventScroll: true });
+  }
+  else if (button.dataset.editAppointment) appointmentDialog({ id: button.dataset.editAppointment });
+  else if (button.dataset.cancelAppointment) cancelAppointment(button.dataset.cancelAppointment);
   else if (button.dataset.mood !== undefined) {
     const value = Number(button.dataset.mood);
     state.mood = value; state.moodValues[6] = value + 1;
@@ -359,11 +488,6 @@ document.addEventListener('click', event => {
     if (!person || !canView(person)) { toast('내담자의 공유 동의가 필요해요.'); return; }
     state.selectedClient = person.id; navigate('detail');
   }
-  else if (button.dataset.time) {
-    $$('.appointment-option').forEach(option => { option.classList.remove('selected'); option.setAttribute('aria-pressed', 'false'); });
-    button.classList.add('selected'); button.setAttribute('aria-pressed', 'true');
-    $('#appointment-confirm').disabled = false;
-  }
   else if (button.dataset.deleteEntry) {
     const id = Number(button.dataset.deleteEntry);
     openModal('이 마음 기록을 삭제할까요?', '<p>직접 남긴 기록이 이 탭에서 삭제돼요. 삭제한 기록은 되돌릴 수 없습니다.</p>', `<button class="secondary-button" data-action="modal-close">돌아가기</button><button class="primary-button" id="delete-entry-confirm">기록 삭제</button>`);
@@ -372,6 +496,7 @@ document.addEventListener('click', event => {
 });
 function $$(selector, root = document) { return [...root.querySelectorAll(selector)]; }
 document.addEventListener('input', event => {
+  if (event.target.closest('#appointment-form')) validateAppointment();
   if (event.target.id === 'chat-input') {
     state.chatDraft = event.target.value;
     $('.send-button').disabled = state.isTyping || !state.chatDraft.trim();
@@ -381,9 +506,11 @@ document.addEventListener('input', event => {
   if (event.target.id === 'client-search') { state.query = event.target.value; $('#client-table-slot').innerHTML = clientTable(state.page === 'reports'); }
 });
 document.addEventListener('change', event => {
+  if (event.target.closest('#appointment-form')) validateAppointment();
   if (event.target.id === 'share-consent') $('#share-confirm').disabled = !event.target.checked;
 });
 document.addEventListener('submit', event => {
+  if (event.target.id === 'appointment-form') { event.preventDefault(); saveAppointment(); }
   if (event.target.id === 'chat-form') { event.preventDefault(); sendMessage($('#chat-input').value, true); }
   if (event.target.id === 'journal-form') {
     event.preventDefault();
@@ -396,6 +523,12 @@ document.addEventListener('submit', event => {
 });
 document.addEventListener('keydown', event => {
   document.body.dataset.input = 'keyboard';
+  if (event.target.dataset.calendarDate) {
+    const date = parseDateKey(event.target.dataset.calendarDate);
+    const moves = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7, Home: -date.getDay(), End: 6 - date.getDay() };
+    if (event.key in moves) { event.preventDefault(); date.setDate(date.getDate() + moves[event.key]); selectCalendarDate(dateKey(date)); }
+    if (event.key === 'PageUp' || event.key === 'PageDown') { event.preventDefault(); changeCalendarMonth(event.key === 'PageUp' ? -1 : 1); $(`[data-calendar-date="${state.selectedDate}"]`)?.focus({ preventScroll: true }); }
+  }
   if (event.target.id === 'chat-input' && event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); sendMessage(event.target.value, true); }
   const modal = $('.modal');
   const mobileMenu = state.mobileMenu && window.matchMedia('(max-width: 760px)').matches;
@@ -414,4 +547,4 @@ document.addEventListener('keydown', event => {
 document.addEventListener('click', event => { if (event.target.classList.contains('modal-backdrop')) closeModal(); });
 window.addEventListener('hashchange', () => navigate(location.hash.slice(1)));
 window.addEventListener('resize', () => { if (!$('.modal')) updateMobileAccessibility(); });
-navigate(location.hash.slice(1) || 'home', { focus: false });
+navigate(location.hash.slice(1), { focus: false });
